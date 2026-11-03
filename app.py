@@ -2,7 +2,8 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+import json
+import os
 
 # Configuración de página
 st.set_page_config(page_title="Comparador de Activos Financieros", layout="wide")
@@ -10,18 +11,53 @@ st.set_page_config(page_title="Comparador de Activos Financieros", layout="wide"
 st.title("📈 Comparador de Activos Financieros")
 st.markdown("Compara el rendimiento y métricas clave de acciones, ETFs, fondos indexados y fondos monetarios utilizando Yahoo Finance.")
 
-# Diccionario con activos frecuentes organizados por categoría para facilitar la selección inicial
-POPULAR_ASSETS = {
-    "--- Selección rápida o escribe abajo ---": "",
-    "Apple Inc. (Acción)": "AAPL",
-    "Microsoft Corp. (Acción)": "MSFT",
-    "NVIDIA Corp. (Acción)": "NVDA",
-    "iShares Core S&P 500 UCITS ETF (ETF)": "CSPX.L",
-    "Vanguard FTSE All-World UCITS ETF (ETF)": "VWCE.DE",
-    "iShares Core MSCI World UCITS ETF (ETF)": "IWDA.AS",
-    "Vanguard S&P 500 Index Fund (Fondo Indexado)": "VFINX",
-    "Fidelity US Dollar Cash Fund (Fondo Monetario)": "FUCAP.L"
-}
+# Archivo local para guardar los activos de forma permanente
+ARCHIVO_ASSETS = "assets_personalizados.json"
+
+# Función para cargar los activos base + los guardados en disco
+def cargar_activos():
+    activos_base = {
+        "--- Selección rápida o escribe abajo ---": "",
+        "Apple Inc. (Acción)": "AAPL",
+        "Microsoft Corp. (Acción)": "MSFT",
+        "NVIDIA Corp. (Acción)": "NVDA",
+        "iShares Core S&P 500 UCITS ETF (ETF)": "CSPX.L",
+        "Vanguard FTSE All-World UCITS ETF (ETF)": "VWCE.DE",
+        "iShares Core MSCI World UCITS ETF (ETF)": "IWDA.AS",
+        "Vanguard S&P 500 Index Fund (Fondo Indexado)": "VFINX",
+        "Fidelity US Dollar Cash Fund (Fondo Monetario)": "FUCAP.L"
+    }
+    
+    # Si existe el archivo de persistencia, lo leemos y combinamos
+    if os.path.exists(ARCHIVO_ASSETS):
+        try:
+            with open(ARCHIVO_ASSETS, "r", encoding="utf-8") as f:
+                activos_guardados = json.load(f)
+                activos_base.update(activos_guardados)
+        except Exception:
+            pass
+            
+    return activos_base
+
+# Función para guardar un nuevo activo permanentemente en el archivo JSON
+def guardar_activo_permanente(etiqueta, ticker):
+    try:
+        guardados = {}
+        if os.path.exists(ARCHIVO_ASSETS):
+            with open(ARCHIVO_ASSETS, "r", encoding="utf-8") as f:
+                guardados = json.load(f)
+        
+        # Solo guardamos si no existe ya
+        if ticker not in guardados.values():
+            guardados[etiqueta] = ticker
+            with open(ARCHIVO_ASSETS, "w", encoding="utf-8") as f:
+                json.dump(guardados, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        st.sidebar.error(f"Error al guardar el activo: {e}")
+
+# Inicializar los activos en session_state usando la función de carga
+if "popular_assets" not in st.session_state:
+    st.session_state.popular_assets = cargar_activos()
 
 # Selección de período temporal
 st.sidebar.header("⚙️ Configuración del Análisis")
@@ -31,7 +67,7 @@ periodo = st.sidebar.selectbox(
     index=4
 )
 
-# Función para obtener datos de un activo
+# Función para obtener datos de Yahoo Finance
 @st.cache_data(ttl=3600)
 def cargar_datos_activo(ticker_symbol):
     try:
@@ -39,7 +75,6 @@ def cargar_datos_activo(ticker_symbol):
         info = ticker.info
         hist = ticker.history(period=periodo)
         
-        # Validar si Yahoo devolvió datos
         if hist.empty:
             return None, None
             
@@ -53,30 +88,28 @@ col1, col2 = st.columns(2)
 def selector_activo(col_name, default_preset):
     st.subheader(col_name)
     
-    # 1. Lista desplegable con sugerencias
+    # 1. Lista desplegable con sugerencias (incluyendo los permanentes)
     preset = st.selectbox(
         "Seleccionar de lista predefinida:",
-        options=list(POPULAR_ASSETS.keys()),
+        options=list(st.session_state.popular_assets.keys()),
         key=f"preset_{col_name}"
     )
     
     # 2. Búsqueda directa por Ticker o ISIN
     ticker_input = st.text_input(
         "O introduce directamente Ticker / ISIN (Yahoo Finance):",
-        value=POPULAR_ASSETS[preset] if preset != "--- Selección rápida o escribe abajo ---" else default_preset,
+        value=st.session_state.popular_assets[preset] if preset != "--- Selección rápida o escribe abajo ---" else default_preset,
         key=f"input_{col_name}"
     ).strip().upper()
     
     return ticker_input
 
-# Configurar selectores en las dos columnas
 with col1:
     ticker_1 = selector_activo("Activo A", "AAPL")
 
 with col2:
     ticker_2 = selector_activo("Activo B", "MSFT")
 
-# Botón para ejecutar la comparación
 st.divider()
 
 if ticker_1 and ticker_2:
@@ -86,10 +119,20 @@ if ticker_1 and ticker_2:
     if hist1 is None or hist2 is None:
         st.error("⚠️ No se pudieron obtener datos para alguno de los tickers introducidos. Por favor, verifica el símbolo en Yahoo Finance.")
     else:
+        # --- REGISTRO Y GUARDADO PERMANENTE ---
+        for ticker, info in [(ticker_1, info1), (ticker_2, info2)]:
+            nombre_largo = info.get('longName', info.get('shortName', ticker))
+            tipo = info.get('quoteType', 'Activo')
+            etiqueta = f"{nombre_largo} ({tipo}) - [{ticker}]"
+            
+            # Si el ticker no está en la lista actual, lo añadimos al disco y a la sesión
+            if ticker not in st.session_state.popular_assets.values():
+                st.session_state.popular_assets[etiqueta] = ticker
+                guardar_activo_permanente(etiqueta, ticker)
+
         # --- SECCIÓN 1: Gráfico comparativo porcentual ---
         st.subheader("📊 Rendimiento Comparativo (%)")
         
-        # Normalizar precios base 100 / Cambio Porcentual acumulado
         norm_hist1 = ((hist1['Close'] / hist1['Close'].iloc[0]) - 1) * 100
         norm_hist2 = ((hist2['Close'] / hist2['Close'].iloc[0]) - 1) * 100
 
@@ -111,14 +154,13 @@ if ticker_1 and ticker_2:
         
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- SECCIÓN 2: Tabla de Métricas Clave ---
+        # --- SECCIÓN 2: Métricas ---
         st.subheader("📋 Métricas y Datos Fundamentales")
 
         def obtener_metricas(info, hist):
             precio_actual = hist['Close'].iloc[-1]
             precio_inicio = hist['Close'].iloc[0]
             rendimiento = ((precio_actual - precio_inicio) / precio_inicio) * 100
-            
             moneda = info.get('currency', 'USD')
             return {
                 "Nombre": info.get('longName', info.get('shortName', 'N/D')),
