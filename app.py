@@ -1,183 +1,211 @@
 import streamlit as st
-import plotly.graph_objects as go
+import yfinance as yf
+import pandas as pd
 
 # ---------------------------------------------------------
-# CONFIGURACIÓN DE PÁGINA Y ESTILOS
+# CONFIGURACIÓN DE PÁGINA
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="AI CapEx & Debt Risk Dashboard",
-    page_icon="📈",
+    page_title="Comparador Global de Deuda y Carteras",
+    page_icon="⚖️",
     layout="wide"
 )
 
-# Título y Subtítulo
-st.title("📈 AI CapEx, Debt Risk & Portfolio Dashboard")
-st.caption("Análisis de sostenibilidad de deuda Big Tech & Simulador de Reestructuración de Cartera")
-
-# Métrica destacada del Bono a 10 años
-col_header, _ = st.columns([1, 2])
-with col_header:
-    st.metric(label="EE.UU. 10Y Treasury Yield (Referencia)", value="4.50%")
+st.title("⚖️ Evaluador & Comparador Financiero de Deuda y Carteras")
+st.caption("Conexión con Yahoo Finance | Comparador Global de Renta Fija | Proyección de Carteras Ficticias")
 
 st.divider()
 
-# ---------------------------------------------------------
-# DATOS INICIALES DE EJEMPLO
-# ---------------------------------------------------------
-companies_data = {
-    "Oracle (ORCL)": {"capex": 24000, "fcf": -24000, "debt": 43000, "roi": 6.0},
-    "Microsoft (MSFT)": {"capex": 55000, "fcf": 65000, "debt": 20000, "roi": 10.0},
-    "Alphabet (GOOGL)": {"capex": 48000, "fcf": 60000, "debt": 15000, "roi": 9.0},
-    "Meta (META)": {"capex": 38000, "fcf": 35000, "debt": 18000, "roi": 8.5},
-    "Amazon (AMZN)": {"capex": 60000, "fcf": 30000, "debt": 25000, "roi": 7.5}
-}
-
-# ---------------------------------------------------------
 # NAVEGACIÓN DE PESTAÑAS
-# ---------------------------------------------------------
 tab1, tab2, tab3 = st.tabs([
-    "💻 Estrés Deuda Big Tech", 
-    "📊 Spreads de Crédito & Bonos", 
-    "🧩 Simulador de Cartera Táctica"
+    "🏢 Muestreo Big Tech (Yahoo Finance)", 
+    "🌍 Comparador Global de Deuda", 
+    "📊 Comparador de Carteras (1-10 años)"
 ])
 
 # =========================================================
-# TAB 1: ESTRÉS DEUDA BIG TECH
+# PESTAÑA 1: DATOS REALES YAHOO FINANCE
 # =========================================================
 with tab1:
-    st.header("Evaluador de Sostenibilidad por Empresa")
+    st.header("🏢 Datos Financieros Oficiales (Sin modificación manual)")
+    st.write("Los datos se extraen en tiempo real directamente desde Yahoo Finance a partir de los últimos balances publicados.")
     
-    col_left, col_right = st.columns([1, 2])
+    ticker_dict = {
+        "Microsoft (MSFT)": "MSFT",
+        "Alphabet / Google (GOOGL)": "GOOGL",
+        "Meta (META)": "META",
+        "Amazon (AMZN)": "AMZN",
+        "Oracle (ORCL)": "ORCL"
+    }
     
-    with col_left:
-        st.subheader("Parámetros")
-        selected_company = st.selectbox("Selecciona Empresa", list(companies_data.keys()))
-        data = companies_data[selected_company]
-        
-        # Formulario interactivo
-        capex = st.number_input("Gasto CapEx IA Anual (mUSD)", value=data["capex"], step=1000)
-        fcf = st.number_input("Flujo de Caja Libre / FCF (mUSD)", value=data["fcf"], step=1000)
-        debt = st.number_input("Deuda Emitida Reciente (mUSD)", value=data["debt"], step=1000)
-        roi = st.slider("Retorno Esperado de IA (%)", min_value=0.0, max_value=20.0, value=data["roi"], step=0.5)
+    selected_name = st.selectbox("Selecciona la empresa a consultar:", list(ticker_dict.keys()))
+    ticker_symbol = ticker_dict[selected_name]
+    
+    with st.spinner(f"Obteniendo datos de {ticker_symbol} desde Yahoo Finance..."):
+        try:
+            ticker = yf.Ticker(ticker_symbol)
+            cashflow = ticker.cashflow
+            balance = ticker.balance_sheet
+            
+            # Extracción de valores clave
+            fcf = None
+            capex = None
+            total_debt = None
+            
+            if cashflow is not None and not cashflow.empty:
+                if 'Free Cash Flow' in cashflow.index:
+                    fcf = cashflow.loc['Free Cash Flow'].iloc[0]
+                if 'Capital Expenditure' in cashflow.index:
+                    capex = abs(cashflow.loc['Capital Expenditure'].iloc[0])
+                    
+            if balance is not None and not balance.empty:
+                if 'Total Debt' in balance.index:
+                    total_debt = balance.loc['Total Debt'].iloc[0]
 
-    with col_right:
-        st.subheader("Métricas de Riesgo")
-        
-        # Cálculos de Cobertura e Indigestión
-        fcf_coverage = round(fcf / capex, 2) if capex > 0 else 0
-        
-        m_col1, m_col2 = st.columns(2)
-        
-        with m_col1:
-            st.metric(
-                label="Cobertura FCF / CapEx", 
-                value=f"{fcf_coverage}x", 
-                delta="Caja Negativa" if fcf < 0 else ("Excelente" if fcf >= capex else "Ajustada"),
-                delta_color="inverse" if fcf < 0 else "normal"
-            )
-        
-        with m_col2:
-            indigestion_status = "ELEVADO" if (fcf < 0 or capex > 40000) else "MODERADO"
-            st.metric(
-                label="Nivel de Indigestión de Deuda", 
-                value=indigestion_status,
-                delta="Riesgo Emisión" if indigestion_status == "ELEVADO" else "Sostenible",
-                delta_color="inverse" if indigestion_status == "ELEVADO" else "normal"
-            )
-
-        # Gráfico Plotly: FCF vs CapEx
-        fig_bar = go.Figure(data=[
-            go.Bar(
-                x=["Flujo Caja Libre (FCF)", "CapEx en IA"],
-                y=[fcf, capex],
-                marker_color=["#EF4444" if fcf < 0 else "#10B981", "#3B82F6"]
-            )
-        ])
-        fig_bar.update_layout(
-            title_text=f"Balance de Caja vs CapEx en IA ({selected_company})",
-            yaxis_title="Millones de USD",
-            template="plotly_dark",
-            height=320
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
+            # Mostrar métricas sin edición
+            m1, m2, m3 = st.columns(3)
+            
+            fcf_m = f"${fcf / 1e9:.2f} B" if fcf is not None else "No disponible"
+            capex_m = f"${capex / 1e9:.2f} B" if capex is not None else "No disponible"
+            debt_m = f"${total_debt / 1e9:.2f} B" if total_debt is not None else "No disponible"
+            
+            m1.metric("Flujo de Caja Libre (FCF)", fcf_m)
+            m2.metric("Gasto de Capital (CapEx)", capex_m)
+            m3.metric("Deuda Total", debt_m)
+            
+            # Diagnóstico de Cobertura
+            st.markdown("---")
+            if fcf is not None and capex is not None and capex > 0:
+                coverage = fcf / capex
+                st.subheader(f"Ratio Cobertura FCF / CapEx: **{coverage:.2f}x**")
+                if coverage < 0:
+                    st.error("⚠️ **Caja Negativa:** El negocio no genera suficiente efectivo por sí mismo para cubrir su CapEx e infraestructuras. Requiere endeudamiento.")
+                elif coverage < 1.0:
+                    st.warning("⚡ **Cobertura Ajustada:** El CapEx supera la generación de flujo de caja libre.")
+                else:
+                    st.success("✅ **Cobertura Solvente:** La empresa genera suficiente flujo de caja libre para autofinanciar sus inversiones.")
+                    
+        except Exception as e:
+            st.error(f"Error al conectar con Yahoo Finance: {e}")
 
 # =========================================================
-# TAB 2: SPREADS DE CRÉDITO Y BONOS
+# PESTAÑA 2: COMPARADOR GLOBAL DE DEUDA
 # =========================================================
 with tab2:
-    st.header("Competencia por el Dinero: Tesoro EE.UU. vs Big Tech")
-    st.write(
-        """
-        Las Big Tech (Microsoft, Apple, Alphabet) tienen máxima solvencia financiera y un riesgo de impago (*default*) ínfimo. 
-        Sin embargo, al emitir grandes volúmenes de deuda compiten con el Tesoro de EE.UU., lo que incrementa los **cupones/intereses** 
-        que deben ofrecer a los inversores.
-        """
-    )
+    st.header("🌍 Comparador de Intereses de Deuda (Países y Empresas)")
+    st.write("Compara el rendimiento (*yield*) de la deuda a 10 años entre distintas economías o bonos corporativos.")
     
-    col_s1, col_s2, col_s3 = st.columns(3)
-    col_s1.metric("Bono EE.UU. 10Y (Sin Riesgo)", "4.50%")
-    col_s2.metric("Rendimiento Medio Bono Big Tech", "5.35%")
-    col_s3.metric("Diferencial de Crédito (Spread)", "+85 bps (0.85%)")
-
-    st.info(
-        """
-        **💡 Matiz Clave para la Renta Fija:**  
-        Si mantienes el bono hasta su vencimiento, cobras el 100% de tu capital e intereses. 
-        El ajuste de precio solo afecta a las cotizaciones secundarias si vendes el fondo antes de tiempo.
-        """
-    )
+    # Base de datos de rendimientos de referencia (Estimados / Actualizables)
+    yields_db = {
+        "EE.UU. (Tesoro 10Y)": 4.50,
+        "España (Bono 10Y)": 3.15,
+        "Alemania (Bund 10Y)": 2.30,
+        "Francia (OAT 10Y)": 3.00,
+        "Japón (JGB 10Y)": 0.95,
+        "Microsoft (Deuda Corporativa Grado A)": 5.20,
+        "Oracle (Deuda Corporativa)": 5.80,
+        "ASML / Tech Europa (Deuda Corporativa)": 3.80,
+        "Iberdrola / Utility Europa (Deuda Corporativa)": 4.10
+    }
+    
+    col_d1, col_d2 = st.columns(2)
+    
+    with col_d1:
+        emisor_a = st.selectbox("Selecciona Emisor / País A:", list(yields_db.keys()), index=0)
+        yield_a = yields_db[emisor_a]
+        st.metric(f"Interés / Rendimiento ({emisor_a})", f"{yield_a:.2f}%")
+        
+    with col_d2:
+        emisor_b = st.selectbox("Selecciona Emisor / País B:", list(yields_db.keys()), index=1)
+        yield_b = yields_db[emisor_b]
+        st.metric(f"Interés / Rendimiento ({emisor_b})", f"{yield_b:.2f}%")
+        
+    st.markdown("---")
+    diff = abs(yield_a - yield_b)
+    bps = diff * 100
+    
+    if yield_a > yield_b:
+        st.info(f"💡 **Diferencial (Spread):** **{emisor_a}** ofrece **{diff:.2f}% más de rendimiento** (+{bps:.0f} puntos básicos) que **{emisor_b}**.")
+    elif yield_b > yield_a:
+        st.info(f"💡 **Diferencial (Spread):** **{emisor_b}** ofrece **{diff:.2f}% más de rendimiento** (+{bps:.0f} puntos básicos) que **{emisor_a}**.")
+    else:
+        st.info("💡 Ambos emisores ofrecen exactamente el mismo rendimiento.")
 
 # =========================================================
-# TAB 3: SIMULADOR DE CARTERA TÁCTICA
+# PESTAÑA 3: COMPARADOR DE CARTERAS A TEMPORALIDAD
 # =========================================================
 with tab3:
-    st.header("Simulador de Reestructuración de Cartera")
+    st.header("📊 Comparador de Carteras Ficticias")
+    st.write("Configura dos carteras ficticias para comparar sus proyecciones acumuladas al horizonte temporal que elijas.")
     
-    col_p_left, col_p_right = st.columns([1, 2])
+    # Rendimientos medios estimados por activo (% anual)
+    asset_returns = {
+        "S&P 500 (EE.UU.)": 8.0,
+        "Fondos Europeos": 5.5,
+        "Japón (Nikkei)": 5.0,
+        "Oro": 4.0,
+        "Deuda Elegida en Pestaña 2": yield_a  # Usa el emisor A de la pestaña 2
+    }
     
-    with col_p_left:
-        scenario = st.radio(
-            "Selecciona Escenario de Mercado:",
-            ("Ajuste de Valoración IA / Tensión de Deuda", "Escenario Moderado / Transición", "Boom Tecnológico Continuado en EE.UU.")
-        )
+    years = st.slider("Selecciona el Horizonte Temporal (Años):", min_value=1, max_value=10, value=10)
+    initial_capital = st.number_input("Inversión Inicial (€ / $):", value=10000, step=1000)
+    
+    c_col1, c_col2 = st.columns(2)
+    
+    with c_col1:
+        st.subheader("Configuración Cartera A")
+        p_sp500_a = st.slider("S&P 500 (%)", 0, 100, 50, key="sp_a")
+        p_eur_a = st.slider("Fondos Europeos (%)", 0, 100, 20, key="eur_a")
+        p_deuda_a = st.slider(f"Deuda ({emisor_a}) (%)", 0, 100, 30, key="deuda_a")
         
-        st.markdown("---")
-        st.markdown("**Composición de Tu Cartera Defensiva:**")
-        st.write("• S&P 500 (EE.UU.): **10%**")
-        st.write("• Fondos Europeos (Stoxx 600): **20%**")
-        st.write("• Nikkei / Japón: **10%**")
-        st.write("• Oro: **10%**")
-        st.write("• Renta Fija (Tesoro / Tech): **50%**")
+        tot_a = p_sp500_a + p_eur_a + p_deuda_a
+        if tot_a != 100:
+            st.caption(f"⚠️ La suma de porcentajes debe ser 100% (Actual: {tot_a}%)")
+            
+        ret_weighted_a = ((p_sp500_a * asset_returns["S&P 500 (EE.UU.)"]) + 
+                          (p_eur_a * asset_returns["Fondos Europeos"]) + 
+                          (p_deuda_a * yield_a)) / 100.0
+
+    with c_col2:
+        st.subheader("Configuración Cartera B")
+        p_sp500_b = st.slider("S&P 500 (%)", 0, 100, 10, key="sp_b")
+        p_eur_b = st.slider("Fondos Europeos (%)", 0, 100, 20, key="eur_b")
+        p_deuda_b = st.slider(f"Deuda ({emisor_a}) (%)", 0, 100, 70, key="deuda_b")
         
-        st.success(
-            "Estrategia táctica: Si la IA confirma retornos sólidos, mantienes el 50% en Renta Fija como pólvora seca para rotar paulatinamente de vuelta al S&P 500."
-        )
+        tot_b = p_sp500_b + p_eur_b + p_deuda_b
+        if tot_b != 100:
+            st.caption(f"⚠️ La suma de porcentajes debe ser 100% (Actual: {tot_b}%)")
+            
+        ret_weighted_b = ((p_sp500_b * asset_returns["S&P 500 (EE.UU.)"]) + 
+                          (p_eur_b * asset_returns["Fondos Europeos"]) + 
+                          (p_deuda_b * yield_a)) / 100.0
 
-    with col_p_right:
-        # Lógica de rendimiento según escenario
-        if scenario == "Ajuste de Valoración IA / Tensión de Deuda":
-            trad_ret, def_ret = -8.5, 4.2
-        elif scenario == "Escenario Moderado / Transición":
-            trad_ret, def_ret = 6.0, 5.5
-        else:
-            trad_ret, def_ret = 15.0, 8.0
-
-        p_m1, p_m2 = st.columns(2)
-        p_m1.metric("Cartera Tradicional (50% S&P 500)", f"{trad_ret}% / año")
-        p_m2.metric("Tu Cartera Defensiva", f"{def_ret}% / año")
-
-        # Gráfico comparativo de carteras
-        fig_port = go.Figure(data=[
-            go.Bar(
-                x=["Cartera Tradicional (50% S&P 500)", "Tu Cartera Defensiva"],
-                y=[trad_ret, def_ret],
-                marker_color=["#EF4444" if trad_ret < 0 else "#6366F1", "#10B981"]
-            )
-        ])
-        fig_port.update_layout(
-            title_text="Rentabilidad Estimada Anualizada por Cartera (%)",
-            yaxis_title="Rentabilidad %",
-            template="plotly_dark",
-            height=320
-        )
-        st.plotly_chart(fig_port, use_container_width=True)
+    st.markdown("---")
+    st.subheader(f"📈 Resultados Proyectados a {years} Años (Capital Inicial: {initial_capital:,.0f}€)")
+    
+    final_val_a = initial_capital * ((1 + ret_weighted_a / 100) ** years)
+    final_val_b = initial_capital * ((1 + ret_weighted_b / 100) ** years)
+    
+    profit_a = final_val_a - initial_capital
+    profit_b = final_val_b - initial_capital
+    
+    res_col1, res_col2 = st.columns(2)
+    
+    with res_col1:
+        st.markdown("### Cartera A")
+        st.metric("Rendimiento Anual Medio", f"{ret_weighted_a:.2f}%")
+        st.metric(f"Valor Final tras {years} Años", f"{final_val_a:,.2f} €", delta=f"+{profit_a:,.2f} € Ganancia")
+        
+    with res_col2:
+        st.markdown("### Cartera B")
+        st.metric("Rendimiento Anual Medio", f"{ret_weighted_b:.2f}%")
+        st.metric(f"Valor Final tras {years} Años", f"{final_val_b:,.2f} €", delta=f"+{profit_b:,.2f} € Ganancia")
+        
+    st.markdown("---")
+    diff_profit = abs(profit_a - profit_b)
+    if profit_a > profit_b:
+        st.success(f"🏆 **La Cartera A** genera **{diff_profit:,.2f} € más de beneficio** que la Cartera B en el horizonte de {years} años.")
+    elif profit_b > profit_a:
+        st.success(f"🏆 **La Cartera B** genera **{diff_profit:,.2f} € más de beneficio** que la Cartera A en el horizonte de {years} años.")
+    else:
+        st.info("Ambas carteras producen exactamente la misma ganancia proyectada.")
